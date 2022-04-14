@@ -44,7 +44,12 @@ where
         }
     }
 
+    // if the page exists, but infobox doesn't - something's very wrong!
+    // Like, say, it's a redirect.. 
+    // We need to handle those things case-by-case
     assert_eq!(infoboxen.len(), 1);
+    
+
     // sanity check
     // yes, quadratic
     for (i, v1) in new_ibox_values.iter().enumerate() {

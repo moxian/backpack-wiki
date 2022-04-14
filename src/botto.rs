@@ -1,5 +1,10 @@
 const WIKI_URL: &str = "https://backpack-hero.fandom.com/api.php";
 
+// *** vvv THESE ARE THE KNOBS YOU ARE LOOKING FOR vvv *** //
+const EDIT_EXISTING: bool = true;
+const CREATE_NEW: bool = true;
+const EDIT_OK: bool = false; // main knob overriding the two above
+
 #[derive(serde::Deserialize)]
 struct Cred {
     name: String,
@@ -29,6 +34,27 @@ async fn get_existing_page_text(api: &mediawiki::api::Api, page: &str) -> Option
     Some(text)
 }
 
+#[derive(Debug, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+enum MediawikiErrorCode {
+    Ratelimited,
+}
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)] // yes, i'm mad
+struct MediawikiError {
+    #[serde(rename = "*")]
+    star: String,
+    code: MediawikiErrorCode,
+    info: String,
+}
+
+// ideally i'd parse it into a proper enum but that's looks even more gnarly..
+fn extract_mediawiki_error(v: &serde_json::Value) -> Option<MediawikiError> {
+    let err: MediawikiError = serde_json::from_value(v.as_object().unwrap().get("error")?.clone())
+        .unwrap_or_else(|e| panic!("{}: {:?}", e, v));
+    Some(err)
+}
+
 pub(crate) async fn stuff() {
     // see https://www.mediawiki.org/wiki/Manual:Bot_passwords on instructions on how to get creds
     let cred: Cred =
@@ -40,14 +66,10 @@ pub(crate) async fn stuff() {
     let db = crate::backpack_db::load_db();
     let version_string = format!("v{}", db.version);
 
-    let edit_existing = true;
-    let create_new = true;
-    let edit_ok = false; // main knob overriding the two above
     let update_summary = format!(
         "Mass updating the items from the v{} data dump. Code available at https://github.com/moxian/backpack-wiki",
         db.version
     );
-    
 
     for item in &db.items {
         let page_name = item.name.as_str();
@@ -56,39 +78,60 @@ pub(crate) async fn stuff() {
         infobox_parts.push(("lastUpdate", version_string.clone()));
 
         let existing_text = get_existing_page_text(&api, page_name).await;
-        let new_page_text = match existing_text {
+        let new_page_text = match &existing_text {
             Some(existing_text) => {
-                if !edit_existing {
+                if !EDIT_EXISTING {
                     continue;
                 }
                 crate::wikiparse::update_infobox(&existing_text, &infobox_parts)
             }
             None => {
-                if !create_new {
+                if !CREATE_NEW {
                     continue;
                 }
                 crate::wikiparse::write_new_page(&infobox_parts)
             }
         };
 
+        if Some(&new_page_text) == existing_text.as_ref() {
+            println!("  ..no changes");
+            continue;
+        }
+
         // println!("page for {:?}:\n{}\n\n", page_name, new_page_text);
 
-        if edit_ok {
-            let params = api.params_into(&[
-                ("action", "edit"),
-                ("title", page_name),
-                // ("minor", "true"),
-                ("bot", "true"),
-                ("text", &new_page_text),
-                ("token", &token),
-                ("summary", &update_summary),
-            ]);
+        if !EDIT_OK {
+            continue;
+        }
+        if existing_text.is_none() {
+            println!("  .. does not exist! Creating the page");
+        } else {
+            println!("  .. editing!!");
+        }
+        let params = api.params_into(&[
+            ("action", "edit"),
+            ("title", page_name),
+            // ("minor", "true"),
+            ("bot", "true"),
+            ("text", &new_page_text),
+            ("token", &token),
+            ("summary", &update_summary),
+        ]);
+
+        loop {
             let res = api.post_query_api_json(&params).await.unwrap();
-            if let Some(err) = res.as_object().unwrap().get("error") {
-                println!(
-                    "Failed to edit: {}",
-                    serde_json::to_string_pretty(err.as_object().unwrap()).unwrap()
-                );
+            let err = extract_mediawiki_error(&res);
+            if let Some(err) = err {
+                if err.code == MediawikiErrorCode::Ratelimited {
+                    let wait_for = 30;
+                    println!(
+                        "We are being ratelimited... Waiting {} seconds before retrying..",
+                        wait_for
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(wait_for));
+                    continue;
+                } // else
+                println!("Failed to edit: {:#?}", err);
                 panic!("{:?}", res);
             }
             assert_eq!(
@@ -100,15 +143,16 @@ pub(crate) async fn stuff() {
                 Some("Success"),
                 "{:?}",
                 res
-            ); 
-            // idk if i want to handle the response here honestly... The options are:
-            // {"edit": {"new": ""}} // literal empty string, yes
-            // {"edit": {"nochange": ""}}
-            // {"edit": {"newrevid":443,"newtimestamp":"2022-04-14T02:05:21Z","oldrevid":442}}
-            
-            // println!("{}", &res.to_string());
-            // break;
+            );
+            break; // from the retry loop
         }
+        // idk if i want to handle the response here honestly... The options are:
+        // {"edit": {"new": ""}} // literal empty string, yes
+        // {"edit": {"nochange": ""}}
+        // {"edit": {"newrevid":443,"newtimestamp":"2022-04-14T02:05:21Z","oldrevid":442}}
+
+        // println!("{}", &res.to_string());
+        // break;
     }
 }
 
