@@ -42,7 +42,7 @@ pub(crate) async fn stuff() {
     let create_new = true;
     let edit_ok = false; // main knob overriding the two above
     let update_summary = format!(
-        "Mass updating the items from the v{} data dump.",
+        "Mass updating the items from the v{} data dump. Code available at https://github.com/moxian/backpack-wiki",
         db.version
     );
 
@@ -80,7 +80,6 @@ pub(crate) async fn stuff() {
                 ("summary", &update_summary),
             ]);
             let res = api.post_query_api_json(&params).await.unwrap();
-            println!("{}", &res.to_string());
         }
     }
 }
