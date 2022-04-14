@@ -68,10 +68,7 @@ pub(crate) async fn stuff() {
     let db = crate::backpack_db::load_db();
     let version_string = format!("v{}", db.version);
 
-    let update_summary = format!(
-        "Mass updating the items from the v{} data dump. Code available at https://github.com/moxian/backpack-wiki",
-        db.version
-    );
+    let update_summary = format!("Mass updating for {}", version_string);
 
     for item in &db.items {
         let page_name = item.name.as_str();
@@ -131,7 +128,7 @@ pub(crate) async fn stuff() {
         let params = api.params_into(&[
             ("action", "edit"),
             ("title", page_name),
-            // ("minor", "true"),
+            ("minor", "true"), // keep this.. Otherwise mass edits look very gnarly in recent changes...
             ("bot", "true"),
             ("text", &new_page_text),
             ("token", &token),
