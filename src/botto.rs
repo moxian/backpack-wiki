@@ -1,9 +1,9 @@
 const WIKI_URL: &str = "https://backpack-hero.fandom.com/api.php";
 
 // *** vvv THESE ARE THE KNOBS YOU ARE LOOKING FOR vvv *** //
-const EDIT_EXISTING: bool = true;
-const CREATE_NEW: bool = true;
-const EDIT_OK: bool = false; // main knob overriding the two above
+const PROMPT_EXISTING: bool = true;
+const PROMPT_NEW: bool = true;
+const EDIT_OK: bool = true; // main knob overriding the two above
 
 #[derive(serde::Deserialize)]
 struct Cred {
@@ -39,6 +39,8 @@ async fn get_existing_page_text(api: &mediawiki::api::Api, page: &str) -> Option
 enum MediawikiErrorCode {
     Ratelimited,
 }
+
+#[allow(dead_code)]
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)] // yes, i'm mad
 struct MediawikiError {
@@ -78,19 +80,10 @@ pub(crate) async fn stuff() {
         infobox_parts.push(("lastUpdate", version_string.clone()));
 
         let existing_text = get_existing_page_text(&api, page_name).await;
+        // println!("existing: {:?}", existing_text);
         let new_page_text = match &existing_text {
-            Some(existing_text) => {
-                if !EDIT_EXISTING {
-                    continue;
-                }
-                crate::wikiparse::update_infobox(&existing_text, &infobox_parts)
-            }
-            None => {
-                if !CREATE_NEW {
-                    continue;
-                }
-                crate::wikiparse::write_new_page(&infobox_parts)
-            }
+            Some(existing_text) => crate::wikiparse::update_infobox(&existing_text, &infobox_parts),
+            None => crate::wikiparse::write_new_page(&infobox_parts),
         };
 
         if Some(&new_page_text) == existing_text.as_ref() {
@@ -100,14 +93,41 @@ pub(crate) async fn stuff() {
 
         // println!("page for {:?}:\n{}\n\n", page_name, new_page_text);
 
+        if existing_text.is_some() {
+            println!("  .. differs");
+        } else {
+            println!("  .. does not exist");
+        }
+        // user prompt
+        if existing_text.is_some() && PROMPT_EXISTING || !existing_text.is_some() && PROMPT_NEW {
+            if let Some(existing) = &existing_text {
+                println!(
+                    "Existing:\n{}\n\nProposed:\n{}\n\n Edit? (y/N/q)",
+                    existing, new_page_text
+                );
+            } else {
+                println!("  Create? (y/N/q)");
+            }
+
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer).unwrap();
+            match answer.trim().to_lowercase().as_str() {
+                "y" | "yes" => {}
+                "q" | "quit" => {
+                    println!("quitting.");
+                    break;
+                }
+                _ => {
+                    println!("skipping");
+                    continue;
+                }
+            }
+        }
+
         if !EDIT_OK {
             continue;
         }
-        if existing_text.is_none() {
-            println!("  .. does not exist! Creating the page");
-        } else {
-            println!("  .. editing!!");
-        }
+        println!("  .. working...");
         let params = api.params_into(&[
             ("action", "edit"),
             ("title", page_name),
@@ -123,7 +143,7 @@ pub(crate) async fn stuff() {
             let err = extract_mediawiki_error(&res);
             if let Some(err) = err {
                 if err.code == MediawikiErrorCode::Ratelimited {
-                    let wait_for = 30;
+                    let wait_for = 70;
                     println!(
                         "We are being ratelimited... Waiting {} seconds before retrying..",
                         wait_for

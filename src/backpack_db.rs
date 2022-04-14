@@ -41,25 +41,25 @@ impl Item {
             ("type", self.types.join(", ")),
             ("rarity", self.rarity.to_string()),
         ];
-        if let Some(cost) = &self.cost{
+        if let Some(cost) = &self.cost {
             let mut words = vec![];
-            if let Some(x) = cost.energy{
+            if let Some(x) = cost.energy {
                 words.push(format!("{} Energy", x));
             }
-            if let Some(x) = cost.mana{
+            if let Some(x) = cost.mana {
                 words.push(format!("{} mana", x));
             }
-            if let Some(x) = cost.gold{
+            if let Some(x) = cost.gold {
                 words.push(format!("{} Gold", x));
             }
-            assert!(words.len()!=0, "{:?}", self);
+            assert!(words.len() != 0, "{:?}", self);
             infobox_parts.push(("useCost", words.join(", ")));
         }
         if !effects.is_empty() {
-            infobox_parts.push(("effects", effects.join("\n")))
+            infobox_parts.push(("effects", effects.join("<br/>\n")))
         }
         if !description.is_empty() {
-            infobox_parts.push(("description", description.join("\n")))
+            infobox_parts.push(("description", description.join("<br/>\n")))
         }
         infobox_parts
     }
@@ -69,8 +69,8 @@ impl Item {
 fn capitalize(s: &str) -> String {
     let mut out = "".to_string();
     let mut start = true;
-    for c in s.chars() {
-        if start {
+    for (i, c) in s.char_indices() {
+        if start && !s[i..].to_lowercase().starts_with("of ") {
             out.extend(c.to_uppercase());
         } else {
             out.extend(c.to_lowercase());
@@ -88,9 +88,9 @@ pub fn load_db() -> Db {
         json5::from_str(&std::fs::read_to_string(crate::DATA_DUMP_PATH).unwrap()).unwrap();
     for item in &mut db.items {
         item.name = capitalize(&item.name); // because i don't like allcaps
-        // because serde doesn't do what i want it to do
 
-        if let Some(cost) = &item.cost{
+        // because serde doesn't do what i want it to do
+        if let Some(cost) = &item.cost {
             if cost.energy.is_none() && cost.mana.is_none() && cost.gold.is_none() {
                 item.cost = None
             }
