@@ -1,3 +1,5 @@
+use crate::Args;
+
 const WIKI_URL: &str = "https://backpack-hero.fandom.com/api.php";
 
 // *** vvv THESE ARE THE KNOBS YOU ARE LOOKING FOR vvv *** //
@@ -57,7 +59,17 @@ fn extract_mediawiki_error(v: &serde_json::Value) -> Option<MediawikiError> {
     Some(err)
 }
 
-pub(crate) async fn stuff() {
+fn cmp_version(v1: &str, v2: &str) -> std::cmp::Ordering {
+    let v1 = v1.strip_prefix("v").unwrap();
+    let v2 = v2.strip_prefix("v").unwrap();
+    std::cmp::PartialOrd::partial_cmp(
+        &version_compare::Version::from(v1).unwrap(),
+        &version_compare::Version::from(v2).unwrap(),
+    )
+    .unwrap()
+}
+
+pub(crate) async fn stuff(args: &Args) {
     // see https://www.mediawiki.org/wiki/Manual:Bot_passwords on instructions on how to get creds
     let cred: Cred =
         serde_json::from_str(&std::fs::read_to_string("bot-creds.json").unwrap()).unwrap();
@@ -65,21 +77,41 @@ pub(crate) async fn stuff() {
     api.login(cred.name, cred.password).await.unwrap();
     let token = api.get_edit_token().await.unwrap();
 
-    let db = crate::backpack_db::load_db();
+    let db = crate::backpack_db::load_db(&args.data);
     let version_string = format!("v{}", db.version);
 
-    let update_summary = format!("Mass updating for {}", version_string);
-
-    for item in &db.items {
+    for item in db.items.iter() {
         let page_name = item.name.as_str();
-        println!("{}", page_name);
+        // if page_name != "Gold" {
+        //     continue;
+        // }
+        print!("{} ..", page_name);
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
         let mut infobox_parts = item.to_infobox_pairs();
         infobox_parts.push(("lastUpdate", version_string.clone()));
 
         let existing_text = get_existing_page_text(&api, page_name).await;
         // println!("existing: {:?}", existing_text);
         let new_page_text = match &existing_text {
-            Some(existing_text) => crate::wikiparse::update_infobox(&existing_text, &infobox_parts),
+            Some(existing_text) => {
+                let res = crate::wikiparse::update_infobox(&existing_text, &infobox_parts).unwrap();
+                if existing_text == &res.new_text {
+                    println!(" .. no change");
+                    continue;
+                }
+                if !res.meaningful_change {
+                    println!(" .. not a meaningful change");
+                    continue;
+                }
+                if matches!(
+                    cmp_version(res.old_version.as_ref().unwrap(), &version_string),
+                    std::cmp::Ordering::Greater
+                ) {
+                    println!(" .. refusing to downgrade");
+                    continue;
+                }
+                res.new_text
+            }
             None => crate::wikiparse::write_new_page(&infobox_parts),
         };
 
@@ -124,6 +156,13 @@ pub(crate) async fn stuff() {
         if !EDIT_OK {
             continue;
         }
+        let summary = match &args.summary {
+            Some(s) => s,
+            None => {
+                println!("No `--summary` provided! Not gonna edit stuff!");
+                continue;
+            }
+        };
         println!("  .. working...");
         let params = api.params_into(&[
             ("action", "edit"),
@@ -132,7 +171,7 @@ pub(crate) async fn stuff() {
             ("bot", "true"),
             ("text", &new_page_text),
             ("token", &token),
-            ("summary", &update_summary),
+            ("summary", summary),
         ]);
 
         loop {
@@ -173,10 +212,10 @@ pub(crate) async fn stuff() {
     }
 }
 
-pub(crate) fn main() {
+pub(crate) fn main(args: &Args) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap()
-        .block_on(stuff());
+        .block_on(stuff(args));
 }

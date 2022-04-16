@@ -15,13 +15,83 @@ pub struct UseCost {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ItemRaw {
+    name: String,
+    types: Vec<String>,
+    rarity: String,
+    descriptors: Vec<String>,
+    #[serde(flatten)]
+    cost: Option<UseCost>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(from = "ItemRaw")]
 pub struct Item {
+    pub id: String,
     pub name: String,
     pub types: Vec<String>,
     pub rarity: String,
     pub descriptors: Vec<String>,
     #[serde(flatten)]
     pub cost: Option<UseCost>,
+}
+impl From<ItemRaw> for Item {
+    fn from(f: ItemRaw) -> Self {
+        let mut item = Item {
+            name: capitalize(&f.name),
+            id: f.name,
+            types: f.types,
+            rarity: f.rarity,
+            descriptors: f.descriptors,
+            cost: f.cost,
+        };
+        // because serde doesn't do what i want it to do
+        if let Some(cost) = &item.cost {
+            if cost.energy.is_none() && cost.mana.is_none() && cost.gold.is_none() {
+                item.cost = None
+            }
+        }
+        item
+    }
+}
+
+fn wikify_description_links(items: &mut [Item]) {
+    let mut id_names = items
+        .iter()
+        .map(|i| (i.id.clone(), i.name.clone()))
+        .collect::<Vec<_>>();
+    // idk something about data dump not having ethereal one, and giving bad linkification
+    if !id_names.iter().any(|x| x.0 == "ETHEREAL ARROW") {
+        id_names = id_names
+            .into_iter()
+            .filter(|(id, _)| id != "ARROW")
+            .collect();
+    }
+    // yes, quadratic, screw it
+    for item in items.iter_mut() {
+        for line in &mut item.descriptors {
+            let mut candidates = vec![];
+            for (id, name) in &id_names {
+                if line.contains(id) {
+                    candidates.push((id, name));
+                }
+            }
+            // aaaaa!!
+            // Yes, this breaks on more than one link, i'm well aware
+            while candidates.len() > 1 {
+                candidates.sort_by_key(|x| x.0.len());
+                assert!(candidates
+                    .iter()
+                    .skip(1)
+                    .all(|(c, _): &(&String, _)| c.contains(candidates[0].0)));
+                candidates.remove(0);
+            }
+            assert!(candidates.len() <= 1, "{:?} {:?}", item, candidates);
+            if let Some((id, name)) = candidates.first() {
+                *line = line.replace(id.as_str(), &format!("[[{}]]", name));
+            }
+        }
+    }
 }
 
 impl Item {
@@ -83,18 +153,10 @@ fn capitalize(s: &str) -> String {
     out
 }
 
-pub fn load_db() -> Db {
+pub fn load_db(data_path: impl AsRef<std::path::Path>) -> Db {
     let mut db: Db =
-        json5::from_str(&std::fs::read_to_string(crate::DATA_DUMP_PATH).unwrap()).unwrap();
-    for item in &mut db.items {
-        item.name = capitalize(&item.name); // because i don't like allcaps
-
-        // because serde doesn't do what i want it to do
-        if let Some(cost) = &item.cost {
-            if cost.energy.is_none() && cost.mana.is_none() && cost.gold.is_none() {
-                item.cost = None
-            }
-        }
-    }
+        json5::from_str(&std::fs::read_to_string(data_path.as_ref()).unwrap()).unwrap();
+    wikify_description_links(&mut db.items);
+    // panic!();
     db
 }

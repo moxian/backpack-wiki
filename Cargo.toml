@@ -13,3 +13,7 @@ mediawiki = "0.2"
 regex = "1"
 parse_wiki_text="0.1"
 json5 = "0.4"
+
+clap = {version = "3", features=["derive"]}
+version-compare = "0.1"
+anyhow = "1"

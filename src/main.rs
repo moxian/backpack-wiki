@@ -5,8 +5,17 @@ mod backpack_db;
 mod botto;
 mod wikiparse;
 
-const DATA_DUMP_PATH: &str = "../data/ItemData-0.13.1.json";
+use clap::Parser;
+
+#[derive(clap::Parser, Debug)]
+struct Args{
+    #[clap(long)]
+    data: String,
+    #[clap(long)]
+    summary: Option<String>,
+}
 
 fn main() {
-    botto::main();
+    let args = Args::parse();
+    botto::main( &args);
 }
