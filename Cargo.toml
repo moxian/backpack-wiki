@@ -17,3 +17,11 @@ json5 = "0.4"
 clap = {version = "3", features=["derive"]}
 version-compare = "0.1"
 anyhow = "1"
+
+[[bin]]
+name = "botto"
+path = "bin/botto.rs"
+
+[[bin]]
+name = "navbox"
+path = "bin/navbox.rs"

@@ -1,7 +1,7 @@
 #![deny(unsafe_code)] // xd
 #![allow(clippy::let_and_return)]
 
-mod backpack_db;
+pub mod backpack_db;
 mod botto;
 mod wikiparse;
 
@@ -15,7 +15,7 @@ struct Args{
     summary: Option<String>,
 }
 
-fn main() {
+pub fn main() {
     let args = Args::parse();
     botto::main( &args);
 }
