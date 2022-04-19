@@ -2,7 +2,8 @@ use crate::Args;
 
 const WIKI_URL: &str = "https://backpack-hero.fandom.com/api.php";
 
-// *** vvv THESE ARE THE KNOBS YOU ARE LOOKING FOR vvv *** //
+// *** vvv SOME RANDOM KNOBS vvv *** //
+const VERSION_BUMP_IS_NOTABLE: bool = false;
 const PROMPT_EXISTING: bool = true;
 const PROMPT_NEW: bool = true;
 const EDIT_OK: bool = true; // main knob overriding the two above
@@ -74,6 +75,9 @@ pub(crate) async fn stuff(args: &Args) {
     let cred: Cred =
         serde_json::from_str(&std::fs::read_to_string("bot-creds.json").unwrap()).unwrap();
     let mut api = mediawiki::api::Api::new(WIKI_URL).await.unwrap();
+    api.set_user_agent("backpack-hero wiki botto (by moxian; source: https://github.com/moxian/backpack-wiki)");
+    api.set_edit_delay(Some(1000));
+
     api.login(cred.name, cred.password).await.unwrap();
     let token = api.get_edit_token().await.unwrap();
 
@@ -91,29 +95,58 @@ pub(crate) async fn stuff(args: &Args) {
         infobox_parts.push(("lastUpdate", version_string.clone()));
 
         let existing_text = get_existing_page_text(&api, page_name).await;
-        // println!("existing: {:?}", existing_text);
-        let new_page_text = match &existing_text {
-            Some(existing_text) => {
-                let res = crate::wikiparse::update_infobox(&existing_text, &infobox_parts).unwrap();
-                if existing_text == &res.new_text {
-                    println!(" .. no change");
-                    continue;
+        // todo: this probably breaks again on None
+        let (new_page_text, notable) = if let Some(existing_text) = &existing_text {
+            let mut page = crate::wikiparse::parse_page(&existing_text);
+            assert_eq!(page.item_infoboxes.len(), 1);
+            let infobox = page.item_infoboxes.iter_mut().next().unwrap();
+
+            let mut notable = false;
+            for (k, v) in infobox_parts {
+                match infobox.params.entry(k.to_string()) {
+                    indexmap::map::Entry::Vacant(e) => {
+                        e.insert(v);
+                        notable = true;
+                    }
+                    indexmap::map::Entry::Occupied(mut e) => {
+                        if e.get() != &v {
+                            e.insert(v);
+                            if k != "lastUpdate" && VERSION_BUMP_IS_NOTABLE {
+                                notable = true
+                            }
+                        }
+                    }
                 }
-                if !res.meaningful_change {
-                    println!(" .. not a meaningful change");
-                    continue;
-                }
-                if matches!(
-                    cmp_version(res.old_version.as_ref().unwrap(), &version_string),
-                    std::cmp::Ordering::Greater
-                ) {
-                    println!(" .. refusing to downgrade");
-                    continue;
-                }
-                res.new_text
             }
-            None => crate::wikiparse::write_new_page(&infobox_parts),
+            let new_page_text = crate::wikiparse::reformat_page(&page);
+            (new_page_text, notable)
+        } else {
+            todo!("handle creation..");
         };
+
+        // // println!("existing: {:?}", existing_text);
+        // let new_page_text = match &existing_text {
+        //     Some(existing_text) => {
+        //         let res = crate::wikiparse::update_infobox(&existing_text, &infobox_parts).unwrap();
+        //         if existing_text == &res.new_text {
+        //             println!(" .. no change");
+        //             continue;
+        //         }
+        //         if !res.meaningful_change {
+        //             println!(" .. not a meaningful change");
+        //             continue;
+        //         }
+        //         if matches!(
+        //             cmp_version(res.old_version.as_ref().unwrap(), &version_string),
+        //             std::cmp::Ordering::Greater
+        //         ) {
+        //             println!(" .. refusing to downgrade");
+        //             continue;
+        //         }
+        //         res.new_text
+        //     }
+        //     None => crate::wikiparse::write_new_page(&infobox_parts),
+        // };
 
         if Some(&new_page_text) == existing_text.as_ref() {
             println!("  ..no changes");
@@ -128,7 +161,9 @@ pub(crate) async fn stuff(args: &Args) {
             println!("  .. does not exist");
         }
         // user prompt
-        if existing_text.is_some() && PROMPT_EXISTING || !existing_text.is_some() && PROMPT_NEW {
+        if existing_text.is_some() && notable && PROMPT_EXISTING
+            || !existing_text.is_some() && PROMPT_NEW
+        {
             if let Some(existing) = &existing_text {
                 println!(
                     "Existing:\n{}\n\nProposed:\n{}\n\n Edit? (y/N/q)",

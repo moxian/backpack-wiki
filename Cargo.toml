@@ -17,6 +17,8 @@ json5 = "0.4"
 clap = {version = "3", features=["derive"]}
 version-compare = "0.1"
 anyhow = "1"
+indexmap="1"
+itertools="0.10"
 
 [[bin]]
 name = "botto"

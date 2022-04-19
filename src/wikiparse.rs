@@ -1,9 +1,6 @@
-// this is hekkin terrible, and ideally you should use like a proper grammar or something
-// actually hm.. we have a crate so maybe..
-
 trait NodeExt {
     fn as_text(&self) -> &str;
-    fn _start_end(&self) -> (usize, usize);
+    fn range(&self) -> std::ops::Range<usize>;
     fn start(&self) -> usize;
     fn end(&self) -> usize;
 }
@@ -14,19 +11,20 @@ impl NodeExt for parse_wiki_text::Node<'_> {
             _ => panic!("{:?} is not a text node", self),
         }
     }
-    fn _start_end(&self) -> (usize, usize) {
+    fn range(&self) -> std::ops::Range<usize> {
         use parse_wiki_text::Node;
         match self {
-            Node::Text { start, end, .. } => (*start, *end),
-            Node::Link { start, end, .. } => (*start, *end),
+            Node::Text { start, end, .. } => *start..*end,
+            Node::Link { start, end, .. } => *start..*end,
+            Node::Template { start, end, .. } => *start..*end,
             _ => unimplemented!("Node: {:?}", self),
         }
     }
     fn start(&self) -> usize {
-        self._start_end().0
+        self.range().start
     }
     fn end(&self) -> usize {
-        self._start_end().1
+        self.range().end
     }
 }
 
@@ -53,6 +51,107 @@ impl ParameterExt for parse_wiki_text::Parameter<'_> {
             &source[first.start()..last.end()]
         }
     }
+}
+
+pub enum TriState {
+    Yes,
+    #[allow(dead_code)]
+    No,
+    Idk,
+}
+// do we have it, and do we want it?
+struct Intent<T> {
+    have: Option<T>,
+    want: TriState,
+}
+pub struct Page<'a> {
+    text: &'a str,
+    pub item_infoboxes: Vec<ItemInfobox<'a>>,
+    #[allow(dead_code)]    
+    stub_node: Intent<parse_wiki_text::Node<'a>>,
+    navbox_node: Intent<parse_wiki_text::Node<'a>>,
+}
+pub struct ItemInfobox<'a> {
+    original_fragment: parse_wiki_text::Node<'a>,
+    pub name: String,
+    pub params: indexmap::IndexMap<String, String>,
+}
+impl<'a> ItemInfobox<'a> {
+    fn format(&self) -> String {
+        use itertools::Itertools;
+        let out = "{{Item".to_string()
+            + &self
+                .params
+                .iter()
+                .map(|(k, v)| format!("\n | {} = {}", k, v))
+                .join("")
+            + "\n}}";
+        out
+    }
+}
+pub fn parse_page(page: &str) -> Page {
+    let parsed = parse_wiki_text::Configuration::default().parse(page);
+    assert!(parsed.warnings.is_empty());
+    let mut infoboxen = vec![];
+    let mut stub_node = None;
+    let mut navbox_node = None;
+    for node in parsed.nodes {
+        match &node {
+            parse_wiki_text::Node::Template {
+                start,
+                end,
+                name,
+                parameters,
+            } => {
+                assert_eq!(name.len(), 1);
+                match name[0] {
+                    parse_wiki_text::Node::Text { value, .. } => match value {
+                        "Item" => {
+                            let params_parsed = parameters
+                                .iter()
+                                .map(|p| (p.name_str(page).to_owned(), p.val_str(page).to_owned()))
+                                .collect::<indexmap::IndexMap<_, _>>();
+                            infoboxen.push(ItemInfobox {
+                                original_fragment: node,
+                                name: params_parsed["title"].to_owned(),
+                                params: params_parsed,
+                            });
+                        }
+                        "Stub" => stub_node = Some(node),
+                        "Items Navbox" => navbox_node = Some(node),
+                        _ => {} //just some text, don't worry about it
+                    },
+                    _ => unimplemented!("{:?}", name),
+                }
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(infoboxen.len(), 1);
+    Page {
+        text: page,
+        item_infoboxes: infoboxen,
+        stub_node: Intent {
+            have: stub_node,
+            want: TriState::Idk,
+        },
+        navbox_node: Intent {
+            have: navbox_node,
+            want: TriState::Yes,
+        },
+    }
+}
+
+pub fn reformat_page<'a>(page: &'a Page) -> String {
+    let mut result = page.text.to_string();
+    for ibox in page.item_infoboxes.iter() {
+        result.replace_range(ibox.original_fragment.range(), &ibox.format());
+    }
+    match (&page.navbox_node.have, &page.navbox_node.want) {
+        (None, TriState::Yes) => result.push_str("\n{{Items Navbox}}"),
+        _ => {}
+    };
+    result
 }
 
 pub struct UpdateResult<'a> {
